@@ -1,0 +1,125 @@
+diff --git a/nova/objects/fields.py b/nova/objects/fields.py
+index 960fcc8..59f2499 100644
+--- a/nova/objects/fields.py
++++ b/nova/objects/fields.py
+@@ -168,6 +168,8 @@ class Architecture(BaseNovaEnum):
+     XTENSA = arch.XTENSA
+     XTENSAEB = arch.XTENSAEB
+ 
++    LOONGARCH64 = arch.LOONGARCH64
++
+     ALL = arch.ALL
+ 
+     @classmethod
+@@ -214,6 +216,9 @@ class Architecture(BaseNovaEnum):
+         if newname == "amd64":
+             newname = cls.X86_64
+ 
++        if newname == "loongarch64":
++            newname = cls.LOONGARCH64
++
+         if not cls.is_valid(newname):
+             raise exception.InvalidArchitectureName(arch=name)
+ 
+diff --git a/nova/virt/arch.py b/nova/virt/arch.py
+index 7518ab9..ba260dc 100644
+--- a/nova/virt/arch.py
++++ b/nova/virt/arch.py
+@@ -54,6 +54,8 @@ X86_64 = 'x86_64'
+ XTENSA = 'xtensa'
+ XTENSAEB = 'xtensaeb'
+ 
++LOONGARCH64 = 'loongarch64'
++
+ ALL = (
+     ALPHA, ARMV6, ARMV7, ARMV7B,
+     AARCH64, CRIS, I686, IA64, LM32,
+@@ -62,4 +64,5 @@ ALL = (
+     PPC, PPCLE, PPC64, PPC64LE, PPCEMB,
+     S390, S390X, SH4, SH4EB, SPARC,
+     SPARC64, UNICORE32, X86_64, XTENSA, XTENSAEB,
++    LOONGARCH64,
+ )
+diff --git a/nova/virt/libvirt/blockinfo.py b/nova/virt/libvirt/blockinfo.py
+index f86a9c4..f460d6f 100644
+--- a/nova/virt/libvirt/blockinfo.py
++++ b/nova/virt/libvirt/blockinfo.py
+@@ -252,8 +252,9 @@ def get_disk_bus_for_device_type(instance,
+                     obj_fields.Architecture.PPC64LE,
+                     obj_fields.Architecture.S390,
+                     obj_fields.Architecture.S390X,
+-                    obj_fields.Architecture.AARCH64):
+-                return "scsi"
++                    obj_fields.Architecture.AARCH64,
++                    obj_fields.Architecture.LOONGARCH64):
++                    return "scsi"
+             machine_type = libvirt_utils.get_machine_type(image_meta)
+             # NOTE(lyarwood): We can't be any more explicit here as QEMU
+             # provides a version of the Q35 machine type per release.
+diff --git a/nova/virt/libvirt/driver.py b/nova/virt/libvirt/driver.py
+index 8719d67..54e4655 100644
+--- a/nova/virt/libvirt/driver.py
++++ b/nova/virt/libvirt/driver.py
+@@ -5004,7 +5004,8 @@ class LibvirtDriver(driver.ComputeDriver):
+                                     fields.Architecture.X86_64,
+                                     fields.Architecture.PPC64,
+                                     fields.Architecture.PPC64LE,
+-                                    fields.Architecture.PPC):
++                                    fields.Architecture.PPC,
++                                    fields.Architecture.LOONGARCH64):
+             return model
+ 
+         if not self.cpu_models_mapping:
+@@ -5053,6 +5054,9 @@ class LibvirtDriver(driver.ComputeDriver):
+                              'migration can break unless all compute nodes '
+                              'have identical cpus. AArch64 does not support '
+                              'other modes.')
++                elif caps.host.cpu.arch == fields.Architecture.LOONGARCH64:
++                    mode = "custom"
++                    model = "Loongson-3A5000"
+                 else:
+                     mode = "host-model"
+             if mode == "none":
+@@ -5063,7 +5067,9 @@ class LibvirtDriver(driver.ComputeDriver):
+                 if arch == fields.Architecture.AARCH64:
+                     if not models:
+                         models = ['max']
+-
++                if caps.host.cpu.arch == fields.Architecture.LOONGARCH64:
++                    if not models:
++                        models = ["Loongson-3A5000"]
+         else:
+             if mode is None or mode == "none":
+                 return None
+@@ -6579,6 +6585,9 @@ class LibvirtDriver(driver.ComputeDriver):
+                 guest.os_mach_type is not None and
+                 'q35' in guest.os_mach_type):
+             return True
++        if (caps.host.cpu.arch == fields.Architecture.LOONGARCH64 and
++                guest.os_mach_type is not None):
++            return True
+         return False
+ 
+     def _get_guest_config(self, instance, network_info, image_meta,
+@@ -7985,7 +7994,8 @@ class LibvirtDriver(driver.ComputeDriver):
+                 self._host.has_min_version(hv_type=host.HV_DRIVER_QEMU)):
+             return True
+         elif (caps.host.cpu.arch in (fields.Architecture.PPC64,
+-                                     fields.Architecture.PPC64LE)):
++                                     fields.Architecture.PPC64LE,
++                                     fields.Architecture.LOONGARCH64)):
+             return True
+ 
+         return False
+diff --git a/nova/virt/libvirt/utils.py b/nova/virt/libvirt/utils.py
+index da2a6e8..8708f3c 100644
+--- a/nova/virt/libvirt/utils.py
++++ b/nova/virt/libvirt/utils.py
+@@ -572,6 +572,7 @@ def get_default_machine_type(arch: str) -> ty.Optional[str]:
+         obj_fields.Architecture.S390X: "s390-ccw-virtio",
+         obj_fields.Architecture.I686: "pc",
+         obj_fields.Architecture.X86_64: "pc",
++        obj_fields.Architecture.LOONGARCH64: "virt",
+     }
+     return default_mtypes.get(arch)
+ 
